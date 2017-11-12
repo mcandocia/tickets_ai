@@ -1,5 +1,7 @@
 import csv
 from collections import defaultdict
+import numpy as np 
+
 #filename sources
 TRACK_DATA_FILENAME = 'tracks.csv'
 BASE_TICKETS_FILENAME = 'tickets.csv'
@@ -45,6 +47,10 @@ CITIES = ['vancouver',
 
 CITIES.sort()
 
+CITY_INDEXES = {city:i for i, city in enumerate(CITIES)}
+
+N_CITIES = len(CITIES)
+
 #each city contains a list of other cities that it is connected to
 CITY_CITY_CONNECTIONS = defaultdict(dict)
 #the full representation of each edge/track
@@ -68,6 +74,8 @@ with open(TRACK_DATA_FILENAME, 'r') as f:
 		CITY_CITY_CONNECTIONS[city1].update({city2:[i, length]})
 		CITY_CITY_CONNECTIONS[city2].update({city1:[i, length]})
 
+N_TRACKS = len(TRACKS)
+
 #print CITY_CITY_CONNECTIONS
 #print len(CITIES)
 #print len(CITY_CITY_CONNECTIONS)
@@ -88,8 +96,28 @@ TRACK_DECK = reduce(list.__add__, [[color]*n for color, n in TRACK_DECK_LIST.ite
 DECK_COLORS = TRACK_DECK_LIST.keys()
 DECK_COLORS.sort()
 
+#for fast lookup; excludes locomotive for BASE_DECK* so that color costs of tracks can be represented
+DECK_COLOR_INDEXES = {color:i for i, color in enumerate(DECK_COLORS)}
+
+BASE_COLORS = ['green','red','yellow','black','white','orange','pink','blue','gray']
+BASE_COLORS.sort()
+BASE_DECK_COLOR_INDEXES = {color:i for i, color in enumerate(BASE_COLORS)}
+
+N_BASE_COLORS = len(BASE_DECK_COLOR_INDEXES)#9
+
 BASE_TICKETS = []
 BIGCITIES_TICKETS = []
+
+#all of the tickets can be serialized in advance to save time and code complexity
+def serialize_ticket(ticket):
+		"""
+		serializes a selection of tickets to describe a player's own game state
+		"""
+		serialization = np.zeros((N_CITIES + 1))
+		serialization[CITY_INDEXES[ticket['city1']]] = 1
+		serialization[CITY_INDEXES[ticket['city2']]] = 1
+		serialization[N_CITIES] = ticket['points']/10.
+		return serialization
 
 with open(BASE_TICKETS_FILENAME, 'r') as f:
 	reader = csv.reader(f)
@@ -101,6 +129,8 @@ with open(BASE_TICKETS_FILENAME, 'r') as f:
 		BASE_TICKETS.append({'cities':frozenset([city1, city2]),
 			                 'points':points,
 			                 'index':i})
+		BASE_TICKETS[-1]['serialization'] = serialize_ticket(BASE_TICKETS[-1])
+
 	MAX_BASE_INDEX = i
 
 with open(BIGCITIES_TICKETS_FILENAME, 'r') as f:
@@ -119,7 +149,7 @@ with open(BIGCITIES_TICKETS_FILENAME, 'r') as f:
 
 """
 ticket_versions - 'base'/'big_cities'/'both' - what versions of ticket cards are being used?
-card_memory - 'none'/[integer]/'infinite' - how well does the ai keep track of other players cards?
+memory - [integer] - how many previous turns' states should be remembered?
 discount - [0., 1.] - how much weight is put on victory (1) vs. short-term points?
 temperature - [0., 1. (or infinity)] - float representing how random decisions should be based on 
 excess_ticket_limit - [integer] - What is the largest number of unfinished tickets a player can have?
@@ -130,8 +160,11 @@ big_ticket_limit - [integer]/None - If an integer, players will initially be giv
                    greater will not be drawable during the game
 """
 DEFAULT_GAME_CONFIG = {'ticket_versions':'base',
-                       'card_memory':'infinite',
+                       'memory':0,
                        'discount':0.8,
                        'temperature':1.,
                        'excess_ticket_limit':7,
                        'big_ticket_limit':None}
+
+#number of points by segment length
+SEGMENT_POINTS = [0, 1, 2, 4, 7, 10, 15]

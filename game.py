@@ -3,13 +3,9 @@ from player import Player
 from copy import copy, deepcopy
 from random import shuffle
 
-#TODO:
-"""
-* add player ownership aspect of track lines for self.tracks/city_city_connections
-* add calculations of longest track
-* add calculations (in player.py) of which tickets are completed
-  ** also determine if ticket is already completed when searching for new one
-"""
+import numpy as np
+
+
 
 class Game(object):
 	def __init__(self, pre_existing_players=None, 
@@ -21,7 +17,8 @@ class Game(object):
 		for i, player in enumerate(self.players):
 			player.order = i 
 			player.game = self 
-
+		self.n_players = len(self.players)
+		self.config = config 
 		self.trains = copy(TRACK_DECK)
 		shuffle(self.trains)
 		self.discarded_trains = []
@@ -50,35 +47,95 @@ class Game(object):
 		self.end_game = False
 		#some things used to check at end of turn
 		self.tiles_updated = False
+		self.turn = -1
 
 	def run(self):
-		self.pass_first_cards()
+		
 		self.give_random_cards_to_players()
 		self.lay_out_cards()
+		self.pass_first_tickets()
 		while self.final_countdown > 0:
-			pass
+			self.turn += 1
+			self.players[self.turn % self.n_players].take_turn()
+			if last_round:
+				self.final_countdown -= 1
+			else:
+				self.check_if_final_countdown(player)
+		#end game
+		self.calculate_end_game()
 
-	def pass_first_cards(self):
-		pass
+	def calculate_end_game(self):
+		self.calculate_longest_track()
+		max_points = -200
+		for player in player:
+			player.update_points(True)
+			max_points = max(max_points, player.points)
+		first_win_check = []
+		for player in player:
+			if player.points==max_points:
+				first_win_check.append(player)
+
+		if len(first_win_check)==1:
+			first_win_check[0].win=True
+		else:
+			max_completed_tickets = 0
+			for player in first_win_check:
+				max_completed_tickets = max(max_completed_tickets, len(player.completed_tickets))
+			second_win_check = []
+			for player in first_win_check:
+				if len(player.completed_tickets)==max_completed_tickets:
+					player.win=True
+		for player in self.players:
+			player.apply_history()
+
+	def reset_players_history(self):
+		"""
+		call after any desired information has been extracted
+		"""
+		for player in self.players:
+			player.reset(True)
+
+
+	def check_if_final_countdown(self, player):
+		if player.n_trains <= 2:
+			self.last_round=True
+
+	def pass_first_tickets(self):
+		for player in self.players:
+			player.begin_selecting_tickets(min_tickets=2)
 
 	def give_random_cards_to_players(self, n_cards=4):
 		for player in self.players:
 			player.trains[self.trains.pop()] += 1
+			player.n_trains += 1
 		return 0 
 
 	def shuffle_discarded_trains_into_deck(self):
 		self.trains = self.discarded_trains + self.trains 
 		self.discarded_trains = []
 		shuffle(self.trains)
+		self.discard_vector = np.zeros(9)
 		return 0 
 
 	def lay_out_cards(self):
 		"""
-		will fill out 
+		will fill out face up trains and make sure that 
 		"""
 		while len(self.face_up_trains) < 5 and len(self.trains) > 0:
 			self.face_up_trains.append(self.trains.pop())
 		return 0
+
+	def check_if_too_many_locomotives(self):
+		n_locomotives = len([0 for color in self.face_up_trains if color=='locomotive'])
+		while n_locomotives >= 3:
+			self.discarded_trains += self.face_up_trains 
+			self.face_up_trains = []
+			if len(self.trains) < 5:
+				self.shuffle_discarded_trains_into_dek()
+			self.lay_out_cards()
+			n_locomotives = len([0 for color in self.face_up_trains if color=='locomotive'])
+		return 0
+
 
 	def calculate_longest_track(self):
 		maxlen = 0
@@ -101,3 +158,75 @@ class Game(object):
 
 	def load_state(self):
 		pass
+
+	#some general data structure serialization
+	#I forget if this is even used...
+	def serialize_track_segment(self, segment):
+		#vector that shows which cities it connects
+		city_vector = np.zeros(N_CITIES)
+		for city in segment['cities']:
+			city_vector[CITY_INDEXES[city]] = 1
+		#index vector is another way of correlating the data to the segment on the map
+		index_vector = np.zeros(N_TRACKS)
+		index_vector[segment['index']] = 1
+		#6-length vector to describe track length
+		length_vector = np.zeros(6)
+		length_vector[segment['length'] - 1] = 1
+		#determines if track is a double track
+		double_track_vector = 1*segment['double']
+		#vector that shows ownership of tracks
+		track_ownership_vector = np.zeros( 2*self.n_players)
+		track_color_vector = np.zeros(2*N_BASE_COLORS)
+		if segment['double']:
+			if segment['occupied1']:
+				track_ownership_vector[segment['occupied1']] = 1
+			if segment['occupied2']:
+				track_ownership_vector[segment['occupied2'] + self.n_players] = 1
+			track_color_vector[segment['color1']] = 1
+			track_color_vector[segment['color2'] + N_BASE_COLORS] = 1
+		else:
+			if segment['occupied1']:
+				track_ownership_vector[segment['occupied1']] = 1
+			track_color_vector[segment['color1']] = 1
+		return np.hstack(city_vector, index_vector, length_vector, double_track_vector, track_color_vector, track_ownership_vector)
+
+	def serialized_board_state(self, player=None):
+		"""
+		for each track/segment, there is a 2*n_player vector describing the ownership of any double tiles
+		updates are permanent, so this should be updated instead of calculated each time
+
+		the order shall be P0 (city1_1, city1_2) (city2_1, city2_2)| P1 (cities_1, cities_2) ETC.
+		this allows players to share the same vector and apply numpy slicing 
+		some entries will always be empty
+
+		total length of 2*n_players*n_tracks
+		"""
+		if not hasattr(self, 'serialized_board_state'):
+			self.serialized_board_state = np.zeros(N_TRACKS * self.n_players * 2)
+		if player==None:
+			return self.serialized_board_state 
+		else:
+			if player.order == 0:
+				return self.serialized_board_state
+			else:
+				shift_index = 2*N_TRACKS * player.order
+				return np.roll(self.serialized_board_state, -shift_index)
+
+
+	def serialize_deck_state(self):
+		"""
+		vector describing counts of cards in pile, as well as how many cards are in 
+		important: discard_vector must be updated elsewhere so that the discard pile doesn't have to be looped
+		through so many times
+		total length of 19
+		"""
+		color_vector = np.zeros(9)
+		for card in self.face_up_trains:
+			color_vector[DECK_COLOR_INDEXES[color]] += 1
+		if not hasattr(self, 'discard_vector'):
+			self.discard_vector = np.zeros(9)
+		cards_remaining_vector = len(self.trains)/50.#50 makes the number easier on the network regularizers
+		return np.hstack(color_vector, self.discard_vector, cards_remaining_vector)
+
+	def full_serialization(self):
+		return np.hstack(self.serialized_board_state, self.serialize_deck_state())
