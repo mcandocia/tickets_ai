@@ -1,6 +1,6 @@
 # Ticket AI
 
-This repository contains the code and notebooks used to train keras networks to play [Ticket to Ride](https://en.wikipedia.org/wiki/Ticket_to_Ride_(board_game\)), a 2 to 5-player board game that involves building rail lines between US cities and scoring points for building tracks, completing routes, and having the longest rail line.
+This repository contains the code and notebooks used to train keras networks to play [Ticket to Ride](https://en.wikipedia.org/wiki/Ticket_to_Ride_(board_game)), a 2 to 5-player board game that involves building rail lines between US cities and scoring points for building tracks, completing routes, and having the longest rail line.
 
 This project is for purely academic purposes, and I hope the eventual findings are interesting to a wide audience. See [Using Neural Networks to Play Board Games](http://maxcandocia.com/article/2017/Jul/22/using-neural-networks-to-play-board-games/) and [Using AI to Determine Strategy in Machi Koro](http://maxcandocia.com/article/2017/Jul/30/using-ai-for-machi-koro-strategy/) for examples of a game I have analyzed this way.
 
