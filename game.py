@@ -23,8 +23,6 @@ class Game(object):
 			self.players = [Player(id = i, memory=config['memory'], n_players=n_players, game=self) for i in range(n_players)]
 		else:
 			self.players = pre_existing_players 
-			for player in self.players:
-				player.game = self
 			self.reset_players_history()
 		for i, player in enumerate(self.players):
 			player.order = i 
@@ -269,3 +267,8 @@ class Game(object):
 
 	def full_serialization(self):
 		return np.hstack([self.calc_serialized_board_state(), self.serialize_deck_state()])
+
+	def plot(self):
+		"""
+		when implemented, will produce an image that represents the board state in an intuitive way
+		"""

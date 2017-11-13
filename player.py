@@ -79,7 +79,7 @@ class Player(object):
 		"""
 		self.trains = defaultdict(int)
 		self.visible_trains = defaultdict(int)
-		self.ntrains = 0
+		self.n_trains = 0
 		self.uncompleted_tickets = []
 		self.completed_tickets = []
 		#set of frozensets
@@ -262,7 +262,7 @@ class Player(object):
 			self.trains[new_train]+=1
 			self.n_trains+=1
 			if len(self.game.trains) == 0:
-				self.game.trains.shuffle_discarded_trains_into_deck()
+				self.game.shuffle_discarded_trains_into_deck()
 
 	def build_tracks(self, segment, cost, color_id = 0):
 		"""
@@ -344,11 +344,13 @@ class Player(object):
 		track_segment_costs = []
 		track_segments = []
 		for track in self.game.tracks:
-			 cost = self.calculate_train_cost(track) 
-			 if len(cost[0])==0 and len(cost[1])==0:
+			if self.n_cars < track['length']:
+				continue
+			cost = self.calculate_train_cost(track) 
+			if len(cost[0])==0 and len(cost[1])==0:
 			 	continue
-			 track_segment_costs.append(cost)
-			 track_segments.append(track)
+			track_segment_costs.append(cost)
+			track_segments.append(track)
 		return zip(track_segments, track_segment_costs)
 
 	#take turn
