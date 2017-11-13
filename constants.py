@@ -2,6 +2,19 @@ import csv
 from collections import defaultdict
 import numpy as np 
 
+"""
+in case this is helpful...
+
+VERNACULAR:
+
+ * tickets - objectives that each player needs to achieve for points; in the form of a dict
+ * tracks - the segments between each pair of adjacent cities; "double" tracks are counted as one, and
+            each track keeps track of both parts of double tracks, even if only one exists
+ * cars - the 45 pieces that each player starts with to build tracks
+ * trains - the currency used to build tracks with cars; there are 8 colors and a locomotive "rainbow"/wild card
+
+"""
+
 #filename sources
 TRACK_DATA_FILENAME = 'tracks.csv'
 BASE_TICKETS_FILENAME = 'tickets.csv'
@@ -64,7 +77,7 @@ with open(TRACK_DATA_FILENAME, 'r') as f:
 		city2 = row[1]
 		color1 = row[2]
 		color2 = row[3]
-		length = row[4]
+		length = int(row[4])
 		double = len(color2) > 0
 		TRACKS.append({'cities':frozenset([city1,city2]),
 			'color1':color1,'color2':color2,

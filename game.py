@@ -25,6 +25,7 @@ class Game(object):
 			self.players = pre_existing_players 
 			for player in self.players:
 				player.game = self
+			self.reset_players_history()
 		for i, player in enumerate(self.players):
 			player.order = i 
 			player.game = self 		
@@ -55,6 +56,7 @@ class Game(object):
 		self.turn = -1
 
 	def run(self, debug=False):
+		self.debug=debug
 		if debug:
 			print 'giving random cards'
 		self.give_random_cards_to_players()
@@ -68,13 +70,15 @@ class Game(object):
 			self.turn += 1
 			if debug:
 				print 'turn %d' % self.turn 
-			self.players[self.turn % self.n_players].take_turn()
-			if last_round:
+			current_player = self.players[self.turn % self.n_players]
+			current_player.take_turn()
+			if self.last_round:
 				if debug:
 					print 'on last round'
 				self.final_countdown -= 1
 			else:
-				self.check_if_final_countdown(player)
+				self.check_if_final_countdown(current_player)
+			self.shuffle_if_needed()
 		#end game
 		if debug:
 			print 'calculating end of game'
@@ -83,12 +87,12 @@ class Game(object):
 	def calculate_end_game(self):
 		self.calculate_longest_track()
 		max_points = -200
-		for player in player:
+		for player in self.players:
 			player.update_points(True)
-			max_points = max(max_points, player.points)
+			max_points = max(max_points, player.total_points)
 		first_win_check = []
-		for player in player:
-			if player.points==max_points:
+		for player in self.players:
+			if player.total_points==max_points:
 				first_win_check.append(player)
 
 		if len(first_win_check)==1:
@@ -104,6 +108,17 @@ class Game(object):
 		for player in self.players:
 			player.apply_history()
 
+	def __str__(self):
+		winners = str([i for i, player in enumerate(self.players) if player.win])
+		return '%d-player game on turn %d; winners: %s' % (self.n_players, self.turn, winners)
+
+	def has_grabbable_train_pile(self):
+		"""
+		if the deck size + discard pile is less than 4, then this returns
+		false because there aren't enough trains in supply (they need to be spent)
+		"""
+		return len(self.trains) + len(self.discarded_trains) > 3
+
 	def reset_players_history(self):
 		"""
 		call after any desired information has been extracted
@@ -113,7 +128,7 @@ class Game(object):
 
 
 	def check_if_final_countdown(self, player):
-		if player.n_trains <= 2:
+		if player.n_cars <= 2:
 			self.last_round=True
 
 	def pass_first_tickets(self):
@@ -122,9 +137,14 @@ class Game(object):
 
 	def give_random_cards_to_players(self, n_cards=4):
 		for player in self.players:
-			player.trains[self.trains.pop()] += 1
-			player.n_trains += 1
+			for i in range(n_cards):
+				player.trains[self.trains.pop()] += 1
+				player.n_trains += 1
 		return 0 
+
+	def shuffle_if_needed(self):
+		if len(self.trains) < 3:
+			self.shuffle_discarded_trains_into_deck()
 
 	def shuffle_discarded_trains_into_deck(self):
 		self.trains = self.discarded_trains + self.trains 
@@ -142,12 +162,15 @@ class Game(object):
 		return 0
 
 	def check_if_too_many_locomotives(self):
+		"""
+		will not shuffle trains into deck if too few cards in discard pile
+		"""
 		n_locomotives = len([0 for color in self.face_up_trains if color=='locomotive'])
-		while n_locomotives >= 3:
+		while n_locomotives >= 3 and len(self.discarded_trains) > 5:
 			self.discarded_trains += self.face_up_trains 
 			self.face_up_trains = []
 			if len(self.trains) < 5:
-				self.shuffle_discarded_trains_into_dek()
+				self.shuffle_discarded_trains_into_deck()
 			self.lay_out_cards()
 			n_locomotives = len([0 for color in self.face_up_trains if color=='locomotive'])
 		return 0
@@ -156,7 +179,7 @@ class Game(object):
 	def calculate_longest_track(self):
 		maxlen = 0
 		best_players = []
-		for player in players:
+		for player in self.players:
 			player.has_longest_track = False
 			track_length = player.calculate_longest_track()
 			if track_length > maxlen:

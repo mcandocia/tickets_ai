@@ -4,6 +4,7 @@ from ai import AI
 from itertools import combinations
 
 from copy import copy, deepcopy
+import time 
 
 """
 unsupported strategies:
@@ -58,10 +59,11 @@ class Player(object):
 		self.has_longest_track = False
 		self.longest_track_length = 0
 		self.turn = -1
+		self.win=False
 		#zipped ticket serialization, which is updated whenever
 		#new tickets are acquired; this function also uses 
 		#iterate over second element of this
-		self.base_ticket_serialization = self.self_ticket_serialization()
+		self.base_ticket_serialization = zip(*self.self_ticket_serialization())[1]
 
 		self.initialize_history()
 		#memories
@@ -96,24 +98,29 @@ class Player(object):
 		self.has_longest_track = False
 		self.longest_track_length = 0
 		self.turn = -1
+		self.win=False 
 		#zipped ticket serialization, which is updated whenever
 		#new tickets are acquired; this function also uses 
 		#iterate over second element of this
-		self.base_ticket_serialization = self.self_ticket_serialization()
+		self.base_ticket_serialization = zip(*self.self_ticket_serialization())[1]
 		if self.memory==0:
 			self.memories = []
 		else:
-			self.memories = [np.zeros(self.SERIALIZATION_LENGTH) for _ in range(memory)]
+			self.memories = [np.zeros(self.SERIALIZATION_LENGTH) for _ in range(self.memory)]
 		if reset_history:
 			self.initialize_history()
+
+	def __str__(self):
+		return """player with %d/%d completed/uncompleted tickets, %d train cards, %d cars, and 
+		%d total points""" % (len(self.completed_tickets), len(self.uncompleted_tickets), self.n_trains, self.n_cars, self.total_points)
 
 	def apply_history(self, update_ai=True):
 		"""
 		applies history to self at end of game
 		"""
-		self.actual_scores[-1] = self.score 
+		self.actual_scores[-1] = self.total_points 
 		self.win_history = [self.win*1 for _ in self.serialization_history]
-		max_turn = len(self.decision_turn_indexes) -1
+		max_turn = self.turn
 		for turn in self.decision_turn_indexes:
 			self.q_score_history.append(self.actual_scores[min(turn+8, max_turn)])
 		if update_ai:
@@ -121,6 +128,7 @@ class Player(object):
 			self.ai.q_score_history += self.q_score_history 
 			self.ai.serialization_history += self.serialization_history 
 			self.ai.ticket_serialization_history += self.ticket_serialization_history
+			self.ai.memory_history += self.memory_history
 
 	def update_memory(self):
 		if self.memory==0:
@@ -129,7 +137,7 @@ class Player(object):
 		self.memories.pop()
 		serializations = self.append_serializations()
 		self.memories = [serializations] + self.memories
-		self.long_term_memory.append(serializations)
+		
 
 	def initialize_history(self):
 		self.serialization_history = []
@@ -153,7 +161,7 @@ class Player(object):
 		if ticket_serialization<>None:
 			self.ticket_serialization_history.append(deepcopy(ticket_serialization))
 		else:
-			self.ticket_serialization_history.append(deepcopy(self.base_ticket_serialization))
+			self.ticket_serialization_history.append(deepcopy(self.base_ticket_serialization[0]))
 		self.decision_turn_indexes.append(self.turn)
 		self.decision_type_history.append(decision_type)
 		self.memory_history.append(deepcopy(self.memories))
@@ -171,6 +179,7 @@ class Player(object):
 			if self.finished_ticket(ticket, False):
 				self.uncompleted_tickets.append(new_tickets.pop(i))
 				self.finished_ticket(ticket, True)
+				n_already_chosen_tickets+=1
 		ticket_selection = self.ai.decide_on_tickets(self, new_tickets, max(0, min_tickets-n_already_chosen_tickets))
 		ticket_indexes = [t['index'] for t in ticket_selection]
 		reject_tickets = [ticket for ticket in new_tickets if ticket['index'] not in ticket_indexes ]
@@ -196,11 +205,11 @@ class Player(object):
 					break
 		#sends unused tickets to the back of the deck
 		for ticket in reject_tickets:
-			for top_ticket_index in range(max_top_of_deck_range)[::-1]:
+			for top_ticket_index in range(max_top_of_deck_range):
 				top_ticket = self.game.tickets[top_ticket_index]
 				if top_ticket['index'] == ticket['index']:
-					self.game.tickets.insert(self.game.tickets.pop(top_ticket_index), 0)
-		self.base_ticket_serialization = self.self_ticket_serialization()
+					self.game.tickets.append(self.game.tickets.pop(top_ticket_index))
+		self.base_ticket_serialization = zip(*self.self_ticket_serialization())[1]
 		return 0 
 
 	def finished_ticket(self, ticket, mark_ticket=False):
@@ -211,7 +220,7 @@ class Player(object):
 		"""
 		ticket_complete = check_tracks_for_completion(self.tracks, ticket)
 		if mark_ticket and ticket_complete:
-			for i in range(len(self.tickets)):
+			for i in range(len(self.uncompleted_tickets))[::-1]:
 				owned_ticket = self.uncompleted_tickets[i]
 				if owned_ticket['index']==ticket['index']:
 					self.completed_tickets.append(self.uncompleted_tickets.pop(i))
@@ -235,10 +244,10 @@ class Player(object):
 		 * pick top of deck
 		"""
 		train_choice = self.ai.decide_on_train(self, move=0)
-		self.take_train(train_choice)
+		self.select_train(train_choice)
 		if train_choice <> 'locomotive':
 			second_train_choice = self.ai.decide_on_train(self, move=1)
-			self.take_train(second_train_choice)
+			self.select_train(second_train_choice)
 
 	def select_train(self, train_choice):
 		if train_choice <> 'top':
@@ -247,9 +256,11 @@ class Player(object):
 			self.game.face_up_trains.pop(idx)
 			self.game.lay_out_cards()
 			self.game.check_if_too_many_locomotives()
+			self.n_trains+=1
 		else:
 			new_train = self.game.trains.pop()
 			self.trains[new_train]+=1
+			self.n_trains+=1
 			if len(self.game.trains) == 0:
 				self.game.trains.shuffle_discarded_trains_into_deck()
 
@@ -264,6 +275,7 @@ class Player(object):
 			self.trains[color]-=amount
 			self.game.discarded_trains += [color] * amount
 			self.n_trains -= amount 
+			self.n_cars -= amount
 			#updates the discard pile vector
 			self.game.discard_vector[DECK_COLOR_INDEXES[color]] += amount 
 			#public info on colors
@@ -271,7 +283,7 @@ class Player(object):
 		#updates track ownership
 		track_id = segment['index']
 		self.game.tracks[i]['occupied' + str(1+color_id)] = self.order
-		self.tracks.add(segment)
+		self.tracks.add(segment['cities'])
 		#updates points
 		self.track_points += SEGMENT_POINTS[segment['length']]
 		#update game serialization vector
@@ -295,10 +307,10 @@ class Player(object):
 		if self.order in [occupied1, occupied2] or self.n_trains < length:
 			return [ [], [] ]
 		#check to see which ones are already occupied
-		if occupied1 <> None:
+		if occupied1 == None:
 			possible_costs1 = self.calc_color_costs(length, color1)
 
-		if occupied2 <> None:
+		if occupied2 == None and color2 is not '':
 			possible_costs2 = self.calc_color_costs(length, color2)
 
 		return [possible_costs1, possible_costs2]
@@ -330,12 +342,14 @@ class Player(object):
 		returns zipped lists of tracks with their possible costs (a list of 2 lists containing dicts)
 		"""
 		track_segment_costs = []
+		track_segments = []
 		for track in self.game.tracks:
-			 cost = self.calculate_train_cost(self, track) 
+			 cost = self.calculate_train_cost(track) 
 			 if len(cost[0])==0 and len(cost[1])==0:
 			 	continue
 			 track_segment_costs.append(cost)
-		return zip(self.game.tracks, track_segment_costs)
+			 track_segments.append(track)
+		return zip(track_segments, track_segment_costs)
 
 	#take turn
 	def take_turn(self):
@@ -343,17 +357,23 @@ class Player(object):
 		self.turn+=1
 		#iterate through building possibilities
 		possible_tracks = self.determine_possible_tracks()
+		#self.game.pt = possible_tracks
 		#decide on what action to take
-		action, data = self.ai.decide_on_action(self, possible_tracks)
-
+		data, action = self.ai.decide_on_action(self, possible_tracks)
+		if self.game.debug:
+			print 'action: %s' % action 
+		#print 'data:'
+		#print data 
+		#time.sleep(1)
 		#take action
 		if action=='should_choose_train':
 			self.select_trains()
 		elif action=='should_choose_tickets':
 			#implement
 			self.begin_selecting_tickets()
-		elif action=='build_tracks':
-			segment = TRACKS[data['track_id']]
+		elif action=='should_build_tracks':
+			data = self.ai.decide_on_tracks(self, possible_tracks)
+			segment = TRACKS[data['index']]
 			cost = data['cost']
 			color_id = data['color_id']
 			self.build_tracks(segment, cost, color_id)
@@ -361,10 +381,10 @@ class Player(object):
 		#and check ticket completion
 		self.calculate_longest_track()
 		for i in range(len(self.uncompleted_tickets))[::-1]:
-			self.check_tracks_for_completion(self.uncompleted_tickets[i], True)
+			self.finished_ticket(self.uncompleted_tickets[i], True)
 		self.update_points()
 		self.update_memory()
-		self.actual_scores.append(self.points)
+		self.actual_scores.append(self.total_points)
 
 	#puts a hard limit to avoid disastrous behavior
 	def can_select_tickets(self):
@@ -378,9 +398,9 @@ class Player(object):
 		pass
 
 	def update_points(self, check_longest_track=False):
-		self.points = self.track_points + self.positive_ticket_points - self.negative_ticket_points
+		self.total_points = self.track_points + self.positive_ticket_points - self.negative_ticket_points
 		if check_longest_track and self.has_longest_track:
-			self.points += 10
+			self.total_points += 10
 		return 0 
 
 	def other_players(self):
@@ -394,10 +414,10 @@ class Player(object):
 		game_serialization = self.game.full_serialization()
 		self_serialization = self.serialize_self()
 		player_serializations = [player.serialize_self(external=True) for player in self.other_players()]
-		serialization_to_append = np.hstack([game_serialization, self_serialization] + player_serializations)
+		serializations_to_append = np.hstack([game_serialization, self_serialization] + player_serializations)
 		if serializations==None:
 			return serializations_to_append
-		return [np.hstack([s, serialization_to_append]) for s in serializations]
+		return [np.hstack([s, serializations_to_append]) for s in serializations]
 
 	def serialize_self(self, external=False):
 		"""
@@ -449,19 +469,23 @@ class Player(object):
 		ticket_limit = self.game.config['excess_ticket_limit']
 		#this records which tickets are used beyond owned ones
 		if new_tickets==None:
-			additional_ticket_combos  = [ [] ,]
+			additional_ticket_combos  = [ [], ]
 			return zip(additional_ticket_combos,
-				pad_with_np_zeros([t for t in self.uncompleted_tickets], ticket_limit))
+				pad_with_np_zeros([[t for t in self.uncompleted_tickets]], ticket_limit))
 		additional_ticket_combos = []
 		ticket_combinations = []
-		for num_new_tickets in range(min(min_tickets, n_new_tickets, ticket_limit - n_tickets),n_new_tickets):
+		#minimum is the pre-determined lower-bound, the number of tickets to choose from, and how many tickets are
+		#  left in the player's ticket limit
+		#maximum is the minimum of the number of new tickets and how many tickets are left in the player's ticket limit
+		for num_new_tickets in range(min(min_tickets, n_new_tickets, ticket_limit - n_tickets),min(ticket_limit - n_tickets, n_new_tickets)+1):
 			if num_new_tickets == 0:
 				continue
 			for subset in combinations(new_tickets, num_new_tickets):
 				ticket_combinations.append(self.uncompleted_tickets + list(subset))
 				additional_ticket_combos.append(subset)
+				#print num_new_tickets
 		return zip(additional_ticket_combos,
-			pad_with_np_zeros([t for t in ticket_combinations], ticket_limit))
+			pad_with_np_zeros(ticket_combinations, ticket_limit))
 
 
 #function will later need config updated if limit is to be adjusted

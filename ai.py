@@ -10,15 +10,13 @@ from copy import copy, deepcopy
 #calculate some dimension constants
 TICKET_SERIALIZATION_LENGTH = N_CITIES + 1
 
-#TODO: rework ticket serialization so that it is external and is returned as something separate for keras
-# to work with
-
 class AI(object):
 	def __init__(self, n_players, memory, n_tickets=7):
 		#define constants used for serialization
-		self.decision_template = np.zeros(22 + 2*N_TRACKS)
+		self.decision_template = np.zeros(23 + 2*N_TRACKS)
 		self.MEMORY_SERIALIZATION_LENGTH = (2*n_players * N_TRACKS + 19 + 24 + 14*(n_players-1))
-		self.SERIALIZATION_LENGTH = 24 + (n_players-1)*14 + 2*n_players*N_TRACKS + 19
+		#add decision serialization
+		self.SERIALIZATION_LENGTH = self.MEMORY_SERIALIZATION_LENGTH + 23 + 2*N_TRACKS
 		self.TICKET_SERIALIZATION_LENGTH = N_CITIES + 1 
 
 		#construct input layers
@@ -106,13 +104,13 @@ class AI(object):
 			x.append(np.asarray([ticket_hist[i] for ticket_hist in self.ticket_serialization_history]))
 		return x, y
 
-	def train_win(self):
+	def train_win(self, n_epochs=10):
 		x, y = self.prepare_data( 'win')
-		self.win_model.fit(x, y, epochs=10, batch_size=1000, verbose=0)
+		self.win_model.fit(x, y, epochs=n_epochs, batch_size=1000, verbose=0)
 
-	def train_q(self):
+	def train_q(self, n_epochs=10):
 		x, y = self.prepare_data( 'q')
-		self.win_model.fit(x, y, epochs=10, batch_size=1000, verbose=0)
+		self.win_model.fit(x, y, epochs=n_epochs, batch_size=1000, verbose=0)
 
 	def decide_on_action(self, player, possible_tracks):
 		"""
@@ -126,22 +124,20 @@ class AI(object):
 		
 
 		#should choose train
-		action_types.append('should_choose_train')
-		action_data.append(None)
-		serializations.append(self.decision_serialize(player,'SHOULD_CHOOSE_TRAIN'))
+		if player.game.has_grabbable_train_pile():
+			action_types.append('should_choose_train')
+			action_data.append(None)
+			serializations.append(self.decision_serialize(player,'SHOULD_CHOOSE_TRAIN'))
 		#should choose tickets
 		if player.can_select_tickets():
 			action_types.append('should_choose_tickets')
 			action_data.append(None)
 			serializations.append(self.decision_serialize(player,'SHOULD_CHOOSE_TICKETS'))
 		#build tracks
-		for track, cost_list in possible_tracks:
-			for color_id in range(2):
-				for cost in cost_list[color_id]:
-					action_types.append('build_tracks')
-					data = {'color_id':color_id, 'track_index':track['index'], 'cost':cost}
-					action_data.append(data)
-					serializations.append(self.decision_serialize(player, 'BUILD_TRACKS', data))
+		if len(possible_tracks) > 0:
+			action_types.append('should_build_tracks')
+			action_data.append(None)
+			serializations.append(self.decision_serialize(player,'SHOULD_BUILD_TRACKS'))
 		#skip turn (only makes sense with hoarders near end of game...)
 		action_types.append('do_nothing')
 		action_data.append(None)
@@ -161,9 +157,42 @@ class AI(object):
 		player.record_history(serializations[decision_index])
 
 		#return action
-		return serializations[decision_index], action_data[decision_index]
+		return action_data[decision_index], action_types[decision_index]
+
+	def decide_on_tracks(self, player, possible_tracks):
+		action_types = []
+		action_data = []
+		serializations = []
+		for track, cost_list in possible_tracks:
+			for color_id in range(2):
+				for cost in cost_list[color_id]:
+					action_types.append('build_tracks')
+					data = {'color_id':color_id, 'index':track['index'], 'cost':cost}
+					action_data.append(data)
+					serializations.append(self.decision_serialize(player, 'BUILD_TRACKS', data))
+		#concatenate each serialization
+		serializations = player.append_serializations(serializations)
+		#calculate probs and q-scores
+		probabilities = self.calculate_probabilities(serializations, player)
+		q_scores = self.calculate_q_scores(serializations, player)
+
+		#make a decision based on both
+		#some player/game configs go into the algorithm
+		decision_index = self.decide_based_on_p_and_q(probabilities, q_scores, player)
+
+		#record history and then return decision and related data
+		player.record_history(serializations[decision_index])
+
+		#return action
+		return action_data[decision_index]
+
 
 	def decide_on_tickets(self, player, tickets, min_tickets):
+		if player.game.debug:
+			pass
+			#print 'length and min number of tickets'
+			#print len(tickets)
+			#print min_tickets
 		action_type = 'decide_on_tickets'
 		#second arg doesn't do anything in this case since tickets are handled differently
 		decision_serialization = [self.decision_serialize(player, 'ticket_selection')]
@@ -186,10 +215,10 @@ class AI(object):
 		for color in player.game.face_up_trains:
 			options.add(color)
 		options = list(options)
-		decision_serializations = [decision_serialize(player, 'CHOOSE_TRAINS', {'color':color, 'move':move}) for color in options]
+		decision_serializations = [self.decision_serialize(player, 'CHOOSE_TRAINS', {'color':color, 'move':move}) for color in options]
 
 		#concatenate each serialization
-		serializations = player.append_serializations(serializations)
+		serializations = player.append_serializations(decision_serializations)
 		#calc probability & q-score
 		probabilities = self.calculate_probabilities(serializations, player)
 		q_scores = self.calculate_q_scores(serializations, player)
@@ -208,34 +237,37 @@ class AI(object):
 
 		SHOULD_CHOOSE_TRAIN: length 1 (binary)
 		SHOULD_CHOOSE_TICKETS: length 1 (binary)
+		SHOULD_BUILD_TRACKS: length 1 (binary)
 		CHOOSE TRAINS: length 10, colors and take from top
 		BUILD_TRACKS: length 2*n_tracks, 2 for each track
 		BUILD_TRACKS_COST: length 9, colors
 		#TICKET_SELECTION: length: (n_cities + 1 (last element is points))*3; there are 3 tickets
 
-		TOTAL: 1 + 1 + 10 + 2*n_tracks + 9 + 3*n_cities + 3 + 1 = 23 + 2*n_tracks 
+		TOTAL: 1 + 1 + 1 + 10 + 2*n_tracks + 9 + 3*n_cities + 3 + 1 = 24 + 2*n_tracks 
 		"""
 		serialization = copy(self.decision_template)
 		if mode=='SHOULD_CHOOSE_TRAIN':
 			serialization[0] = 1
 		elif mode=='SHOULD_CHOOSE_TICKETS':
 			serialization[1] = 1
+		elif mode=='SHOULD_BUILD_TRACKS':
+			serialization[2] = 1
 		elif mode=='CHOOSE_TRAINS':
 			if selection_data['move'] == 1:
 				#a train has already been selected flag put at end of decision
-				serialization[24+ 2*N_TRACKS ] = 1
+				serialization[22+ 2*N_TRACKS ] = 1
 			color = selection_data['color']
 			if color=='top':
-				serialization[2 + 9] = 1
+				serialization[3 + 9] = 1
 			else:
-				serialization[2 + DECK_COLOR_INDEXES[color]] += 1
+				serialization[3 + DECK_COLOR_INDEXES[color]] += 1
 		elif mode=='BUILD_TRACKS':
 			track_index = selection_data['index']
 			color_id = selection_data['color_id']
 			cost = selection_data['cost']
-			serialization[12 + track_index*2 + color_id] = 1
+			serialization[13 + track_index*2 + color_id] = 1
 			for color, amount in cost.iteritems():
-				serialization[12 + 2*N_TRACKS + DECK_COLOR_INDEXES[color]] = amount 
+				serialization[13 + 2*N_TRACKS + DECK_COLOR_INDEXES[color]] = amount 
 		return serialization
 
 	#main serialization - memory serializations - ticket serializations
@@ -245,23 +277,26 @@ class AI(object):
 		will use default player ticket serializations
 		"""
 		if not ticket_combos:
-			ticket_serialization = player.base_ticket_serialization
+			ticket_serialization = player.base_ticket_serialization[0]
 			n_serializations = len(serializations)
-			model_inputs = [np.asarray(s) for s in serializations] + player.memories + ticket_serialization
+			#print n_serializations
+			player.game.s = serializations 
+			model_inputs = [np.vstack(serializations)] + vertical_repeat(player.memories, n_serializations) + vertical_repeat(ticket_serialization, n_serializations)
 			#model_inputs = [[ [serialization[i] ] + player.memories + ticket_serialization for i in range(n_serializations)]
 		else:
+			n_combos = len(ticket_combos)
 			player.game.s = serializations  
 			player.game.m = player.memories 
 			player.game.tc = ticket_combos
 			#print [np.asarray(ticket_combos)]
-			model_inputs = serializations + player.memories + [np.asarray(tc) for tc in ticket_combos]
+			model_inputs = vertical_repeat(serializations, n_combos) + vertical_repeat(player.memories, n_combos) + restack(ticket_combos)
 			#model_inputs = [[serializations[0]] + player.memories + ticket_serialization for ticket_serialization in ticket_combos]
 		#print len(model_inputs)
 		#print len(model_inputs[0])#this is 6 instead of 10...
 		player.game.mi = model_inputs
-		print model_inputs
+		#print model_inputs
 		preds = self.win_model.predict(model_inputs)
-		print 'made preds'
+		#print 'made preds'
 		return preds[:,0]
 
 
@@ -271,11 +306,16 @@ class AI(object):
 		will use default player ticket serializations
 		"""
 		if not ticket_combos:
-			ticket_serialization = player.base_ticket_serialization
+			ticket_serialization = player.base_ticket_serialization[0]
 			n_serializations = len(serializations)
-			model_inputs = [[ [serialization][i] ] + player.memories + ticket_serialization for i in range(n_serializations)]
+			model_inputs = [np.vstack(serializations)] + vertical_repeat(player.memories, n_serializations) + vertical_repeat(ticket_serialization, n_serializations)
 		else:
-			model_inputs = [[serializations[0]] + player.memories + ticket_serialization for ticket_serialization in ticket_combos]
+			n_combos = len(ticket_combos)
+			#player.game.s = serializations  
+			#player.game.m = player.memories 
+			#player.game.tc = ticket_combos
+			#print [np.asarray(ticket_combos)]
+			model_inputs = vertical_repeat(serializations, n_combos) + vertical_repeat(player.memories, n_combos) + restack(ticket_combos)
 		preds = self.q_model.predict(model_inputs)
 		return preds[:,0]
 
@@ -290,13 +330,24 @@ class AI(object):
 			temperature)
 		return np.random.choice(len(new_probs), p=new_probs)
 
+def vertical_repeat(vec, n):
+	"""
+	given a list of numpy vectors, will repeat each element of the list vertically n times
+	this is used when serialized vectors are combined, and some need to be repeated for each combination of the other
+	"""
+	return [v.reshape((1,len(v))).repeat(n, axis=0) for v in vec]
 
-
+def restack(combos):
+	"""
+	ticket combinations are originally [ [array1, array2, array3], [array1, array2, array3], ...]
+	it needs to be [ rbind_all(array1), rbind_all(array2), ...]
+	"""
+	return [np.vstack(c) for c in zip(*combos)]
 
 EPSILON = 1e-7
 
 def min_normalize(x, epsilon=EPSILON):
-	(x - np.min(x))/(epsilon + np.max(x) - np.min(x))
+	return (x - np.min(x))/(epsilon + np.max(x) - np.min(x))
 
 def normalize(x, temperature):
 	if temperature==0:
