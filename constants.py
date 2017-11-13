@@ -32,7 +32,7 @@ CITIES = ['vancouver',
 		  'santa fe',
 		  'denver',
 		  'kansas city',
-		  'oklaholma city',
+		  'oklahoma city',
 		  'dallas',
 		  'houston',
 		  'new orleans',
@@ -41,7 +41,7 @@ CITIES = ['vancouver',
 		  'atlanta',
 		  'miami',
 		  'charleston',
-		  'releigh',
+		  'raleigh',
 		  'washington',
 		  'saint louis']
 
@@ -113,9 +113,10 @@ def serialize_ticket(ticket):
 		"""
 		serializes a selection of tickets to describe a player's own game state
 		"""
+		city1, city2 = [city for city in ticket['cities']]
 		serialization = np.zeros((N_CITIES + 1))
-		serialization[CITY_INDEXES[ticket['city1']]] = 1
-		serialization[CITY_INDEXES[ticket['city2']]] = 1
+		serialization[CITY_INDEXES[city1]] = 1
+		serialization[CITY_INDEXES[city2]] = 1
 		serialization[N_CITIES] = ticket['points']/10.
 		return serialization
 

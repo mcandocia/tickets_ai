@@ -10,19 +10,24 @@ import numpy as np
 class Game(object):
 	def __init__(self, pre_existing_players=None, 
 		config=DEFAULT_GAME_CONFIG, n_players=None):
-		if not pre_existing_players:
-			self.players = [Player(id = i) for i in range(n_players)]
-		else:
-			self.players = pre_existing_players 
-		for i, player in enumerate(self.players):
-			player.order = i 
-			player.game = self 
-		self.n_players = len(self.players)
 		self.config = config 
 		self.trains = copy(TRACK_DECK)
 		shuffle(self.trains)
 		self.discarded_trains = []
 		self.face_up_trains = []
+		if n_players is not None:
+			self.n_players = n_players
+		else:
+			self.n_players = len(pre_existing_players)
+		if not pre_existing_players:
+			self.players = [Player(id = i, memory=config['memory'], n_players=n_players, game=self) for i in range(n_players)]
+		else:
+			self.players = pre_existing_players 
+			for player in self.players:
+				player.game = self
+		for i, player in enumerate(self.players):
+			player.order = i 
+			player.game = self 		
 		#organize tracks
 		self.tracks = deepcopy(TRACKS)
 		for track in self.tracks:
@@ -49,19 +54,30 @@ class Game(object):
 		self.tiles_updated = False
 		self.turn = -1
 
-	def run(self):
-		
+	def run(self, debug=False):
+		if debug:
+			print 'giving random cards'
 		self.give_random_cards_to_players()
+		if debug:
+			print 'laying out cards'
 		self.lay_out_cards()
+		if debug:
+			print 'passing out first tickets'
 		self.pass_first_tickets()
 		while self.final_countdown > 0:
 			self.turn += 1
+			if debug:
+				print 'turn %d' % self.turn 
 			self.players[self.turn % self.n_players].take_turn()
 			if last_round:
+				if debug:
+					print 'on last round'
 				self.final_countdown -= 1
 			else:
 				self.check_if_final_countdown(player)
 		#end game
+		if debug:
+			print 'calculating end of game'
 		self.calculate_end_game()
 
 	def calculate_end_game(self):
@@ -188,9 +204,9 @@ class Game(object):
 			if segment['occupied1']:
 				track_ownership_vector[segment['occupied1']] = 1
 			track_color_vector[segment['color1']] = 1
-		return np.hstack(city_vector, index_vector, length_vector, double_track_vector, track_color_vector, track_ownership_vector)
+		return np.hstack([city_vector, index_vector, length_vector, double_track_vector, track_color_vector, track_ownership_vector])
 
-	def serialized_board_state(self, player=None):
+	def calc_serialized_board_state(self, player=None):
 		"""
 		for each track/segment, there is a 2*n_player vector describing the ownership of any double tiles
 		updates are permanent, so this should be updated instead of calculated each time
@@ -226,7 +242,7 @@ class Game(object):
 		if not hasattr(self, 'discard_vector'):
 			self.discard_vector = np.zeros(9)
 		cards_remaining_vector = len(self.trains)/50.#50 makes the number easier on the network regularizers
-		return np.hstack(color_vector, self.discard_vector, cards_remaining_vector)
+		return np.hstack([color_vector, self.discard_vector, cards_remaining_vector])
 
 	def full_serialization(self):
-		return np.hstack(self.serialized_board_state, self.serialize_deck_state())
+		return np.hstack([self.calc_serialized_board_state(), self.serialize_deck_state()])

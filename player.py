@@ -12,19 +12,18 @@ unsupported strategies:
 """
 
 """
-#TODO:
-  * implement decision function with q-score and probabilities
-  * finish implementing decisions regarding what to do in a turn
-    (including trains)
-  * figure out length calculation of keras inputs so that the structure can be initialized
-  * determine ideal way of measuring q score
-  * rework decisions when choosing/describing multiple tickets to account for extra inputs to keras shared layers
-  * consider sharing the main body of the q_score network with the probability network
+TODO:
+
+ fix ticket combo serialization; it appears that 
+  a) outside of an explicit call there aren't enough elements generated and
+  b) for some reason it's not getting all 3 starting tickets as an option, I think
+
+ continue debugging
 
 """
 
 class Player(object):
-	def __init__(self, n_players, pre_existing_ai=None, id=None, memory=0):
+	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0):
 		"""
 		n_players must be specified so that an AI can be created if none is given
 		id is not necessary except for identification (order iwll be more important once assigned to game)
@@ -32,15 +31,15 @@ class Player(object):
 		"""
 		#length of memories, essentially (serialization minus decision serialization)
 		self.SERIALIZATION_LENGTH = 2*n_players * N_TRACKS + 19 + 24 + 14*(n_players-1)
-
+		self.game = game 
 		self.id = id
 		if not pre_existing_ai:
 			self.ai = AI(n_players, memory)
 		else:
 			self.ai = pre_existing_ai
-		self.trains = defaultdict(dict)
-		self.visible_trains = defaultdict(dict)
-		self.ntrains = 0
+		self.trains = defaultdict(int)
+		self.visible_trains = defaultdict(int)
+		self.n_trains = 0
 		self.uncompleted_tickets = []
 		self.completed_tickets = []
 		#set of frozensets
@@ -76,8 +75,8 @@ class Player(object):
 		"""
 		resets everything except history (unless set by param)
 		"""
-		self.trains = defaultdict(dict)
-		self.visible_trains = defaultdict(dict)
+		self.trains = defaultdict(int)
+		self.visible_trains = defaultdict(int)
 		self.ntrains = 0
 		self.uncompleted_tickets = []
 		self.completed_tickets = []
@@ -112,16 +111,17 @@ class Player(object):
 		"""
 		applies history to self at end of game
 		"""
+		self.actual_scores[-1] = self.score 
 		self.win_history = [self.win*1 for _ in self.serialization_history]
 		max_turn = len(self.decision_turn_indexes) -1
 		for turn in self.decision_turn_indexes:
-			self.q_score_history.append(self.actual_scores[min(turn+4, max_turn)])
+			self.q_score_history.append(self.actual_scores[min(turn+8, max_turn)])
 		if update_ai:
 			self.ai.win_history += self.win_history
 			self.ai.q_score_history += self.q_score_history 
 			self.ai.serialization_history += self.serialization_history 
 			self.ai.ticket_serialization_history += self.ticket_serialization_history
-	
+
 	def update_memory(self):
 		if self.memory==0:
 			return 0
@@ -147,7 +147,7 @@ class Player(object):
 		#just stores the memories at a given point in time
 		self.memory_history = []
 
-	def  record_history(self, serialization, ticket_serialization=None,
+	def record_history(self, serialization, ticket_serialization=None,
 		decision_type=None):
 		self.serialization_history.append(deepcopy(serialization))
 		if ticket_serialization<>None:
@@ -168,9 +168,9 @@ class Player(object):
 		#will automatically add completed tickets
 		for i in range(len(new_tickets))[::-1]:
 			ticket = new_tickets[i]
-			if self.ticket_complete(ticket, False):
+			if self.finished_ticket(ticket, False):
 				self.uncompleted_tickets.append(new_tickets.pop(i))
-				self.ticket_complete(ticket, True)
+				self.finished_ticket(ticket, True)
 		ticket_selection = self.ai.decide_on_tickets(self, new_tickets, max(0, min_tickets-n_already_chosen_tickets))
 		ticket_indexes = [t['index'] for t in ticket_selection]
 		reject_tickets = [ticket for ticket in new_tickets if ticket['index'] not in ticket_indexes ]
@@ -436,40 +436,47 @@ class Player(object):
 			#serialization = np.hstack(serialization, ticket_serialization)
 		return serialization
 
-	def self_ticket_serializations(self, new_tickets=None, min_tickets=None):
+	def self_ticket_serialization(self, new_tickets=None, min_tickets=None):
 		"""
 		tickets themselves contain their serialization, so all we need to do is return all valid
 		combinations of tickets
 		"""
 		n_tickets = len(self.uncompleted_tickets)
-		n_new_tickets = len(new_tickets)
+		if new_tickets is None:
+			n_new_tickets = 0
+		else:
+			n_new_tickets = len(new_tickets)
 		ticket_limit = self.game.config['excess_ticket_limit']
 		#this records which tickets are used beyond owned ones
 		if new_tickets==None:
 			additional_ticket_combos  = [ [] ,]
 			return zip(additional_ticket_combos,
-				pad_with_np_zeros([t['serialization'] for t in self.uncompleted_tickets], ticket_limit))
+				pad_with_np_zeros([t for t in self.uncompleted_tickets], ticket_limit))
 		additional_ticket_combos = []
-		combinations = [self.uncomplated_tickets]
-		for n_new_tickets in range(min(min_tickets, n_new_tickets, n_tickets-ticket_limit),n_new_tickets):
-			if n_new_tickets == 0:
+		ticket_combinations = []
+		for num_new_tickets in range(min(min_tickets, n_new_tickets, ticket_limit - n_tickets),n_new_tickets):
+			if num_new_tickets == 0:
 				continue
-			for subset in combinations(new_tickets, n_new_tickets):
-				combinations.append(self.uncompleted_tickets + list(subset))
+			for subset in combinations(new_tickets, num_new_tickets):
+				ticket_combinations.append(self.uncompleted_tickets + list(subset))
 				additional_ticket_combos.append(subset)
 		return zip(additional_ticket_combos,
-			pad_with_np_zeros([t['serialization'] for t in combinations], ticket_limit))
+			pad_with_np_zeros([t for t in ticket_combinations], ticket_limit))
 
 
+#function will later need config updated if limit is to be adjusted
 def pad_with_np_zeros(serializations, limit=7):
 	"""
 	iterates through each combination and makes sure that all slots are filled
 	"""
+	#I am lazy so I am doing the expansion here...
+	#print serializations
+	serializations = [[x['serialization'] for x in t] for t in serializations]
 	for serialization_set in serializations:
 		if len(serialization_set)==limit:
 			continue
 		else:
-			serialization_set+= (limit-len(serializations))*[np.zeros(N_CITIES+1)]
+			serialization_set+= (limit-len(serialization_set))*[np.zeros(N_CITIES+1)]
 	return serializations
 
 

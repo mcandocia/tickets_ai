@@ -1,8 +1,10 @@
 from constants import *
-
+import keras 
 from keras.layers import Input, Dense
 from keras.models import Model
 from keras.models import load_model
+
+from copy import copy, deepcopy
 
 
 #calculate some dimension constants
@@ -26,11 +28,11 @@ class AI(object):
 
 		#construct first dense layers
 		main_input_dense_layer = Dense(512, activation='relu')
-		memory_input_dense_layers = [Dense(256, activation='relu') for _ in range_memory]
+		memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
 		ticket_input_dense_layer = Dense(64,activation='relu')
 
 		#connect 
-		main_encoded = main_input_dnese_layer(main_input)
+		main_encoded = main_input_dense_layer(main_input)
 		memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
 			memory_inputs)]
 		ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in ticket_inputs]
@@ -58,11 +60,11 @@ class AI(object):
 
 		self.win_model.compile(optimizer='rmsprop',
 			loss='binary_crossentropy',
-			metrics='accuracy')
+			metrics=['accuracy'])
 
 		self.q_model.compile(optimizer='rmsprop',
 			loss='mean_squared_error',
-			metrics='MSE')
+			metrics=['MSE'])
 
 		self.initialize_history()
 
@@ -245,10 +247,21 @@ class AI(object):
 		if not ticket_combos:
 			ticket_serialization = player.base_ticket_serialization
 			n_serializations = len(serializations)
-			model_inputs = [[ [serialization][i] ] + player.memories + ticket_serialization for i in range(n_serializations)]
+			model_inputs = [np.asarray(s) for s in serializations] + player.memories + ticket_serialization
+			#model_inputs = [[ [serialization[i] ] + player.memories + ticket_serialization for i in range(n_serializations)]
 		else:
-			model_inputs = [[serializations[0]] + player.memories + ticket_serialization for data, ticket_serialization in ticket_combos]
+			player.game.s = serializations  
+			player.game.m = player.memories 
+			player.game.tc = ticket_combos
+			#print [np.asarray(ticket_combos)]
+			model_inputs = serializations + player.memories + [np.asarray(tc) for tc in ticket_combos]
+			#model_inputs = [[serializations[0]] + player.memories + ticket_serialization for ticket_serialization in ticket_combos]
+		#print len(model_inputs)
+		#print len(model_inputs[0])#this is 6 instead of 10...
+		player.game.mi = model_inputs
+		print model_inputs
 		preds = self.win_model.predict(model_inputs)
+		print 'made preds'
 		return preds[:,0]
 
 
@@ -262,7 +275,7 @@ class AI(object):
 			n_serializations = len(serializations)
 			model_inputs = [[ [serialization][i] ] + player.memories + ticket_serialization for i in range(n_serializations)]
 		else:
-			model_inputs = [[serializations[0]] + player.memories + ticket_serialization for data, ticket_serialization in ticket_combos]
+			model_inputs = [[serializations[0]] + player.memories + ticket_serialization for ticket_serialization in ticket_combos]
 		preds = self.q_model.predict(model_inputs)
 		return preds[:,0]
 
