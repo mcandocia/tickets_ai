@@ -66,12 +66,15 @@ class AI(object):
 
 		self.initialize_history()
 
-	def  initialize_history(self):
+	def initialize_history(self):
 		self.serialization_history = []
 		self.ticket_serialization_history = []
 		self.win_history = []
 		self.q_score_history = []
 		self.memory_history = []
+
+	def reset_history(self):
+		self.initialize_history()
 
 	#an %s should be included in both of these to account for the q and win models
 	def save_models(self, filename):
@@ -351,11 +354,11 @@ def min_normalize(x, epsilon=EPSILON):
 
 def normalize(x, temperature):
 	if temperature==0:
-		selected = x==np.max(x)*1
-		return selected/np.sum(selected)
+		selected = x + EPSILON >=np.max(x)*1 
+		return (selected+EPSILON)/np.sum(selected+EPSILON)
 	else:
 		selected = x**(1/temperature)
-		return selected/np.sum(selected)
+		return (selected+EPSILON)/np.sum(selected+EPSILON)
 
 def select_ith_of_zipped(zipped, idx):
 	return [x for i, x, y  in enumerate(zipped) if i==idx][0]

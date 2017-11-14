@@ -12,19 +12,8 @@ unsupported strategies:
   (less necessary if extra info is known about hand composition)
 """
 
-"""
-TODO:
-
- fix ticket combo serialization; it appears that 
-  a) outside of an explicit call there aren't enough elements generated and
-  b) for some reason it's not getting all 3 starting tickets as an option, I think
-
- continue debugging
-
-"""
-
 class Player(object):
-	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0):
+	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0, q_lag=8):
 		"""
 		n_players must be specified so that an AI can be created if none is given
 		id is not necessary except for identification (order iwll be more important once assigned to game)
@@ -38,6 +27,7 @@ class Player(object):
 			self.ai = AI(n_players, memory)
 		else:
 			self.ai = pre_existing_ai
+		self.q_lag = q_lag
 		self.trains = defaultdict(int)
 		self.visible_trains = defaultdict(int)
 		self.n_trains = 0
@@ -122,7 +112,7 @@ class Player(object):
 		self.win_history = [self.win*1 for _ in self.serialization_history]
 		max_turn = self.turn
 		for turn in self.decision_turn_indexes:
-			self.q_score_history.append(self.actual_scores[min(turn+8, max_turn)])
+			self.q_score_history.append(self.actual_scores[min(turn+self.q_lag, max_turn)])
 		if update_ai:
 			self.ai.win_history += self.win_history
 			self.ai.q_score_history += self.q_score_history 
@@ -250,6 +240,7 @@ class Player(object):
 			self.select_train(second_train_choice)
 
 	def select_train(self, train_choice):
+		self.game.shuffle_if_needed()
 		if train_choice <> 'top':
 			self.trains[train_choice]+=1
 			idx = self.game.face_up_trains.index(train_choice)

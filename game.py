@@ -9,7 +9,7 @@ import numpy as np
 
 class Game(object):
 	def __init__(self, pre_existing_players=None, 
-		config=DEFAULT_GAME_CONFIG, n_players=None):
+		config=DEFAULT_GAME_CONFIG, n_players=None, q_lag=8):
 		self.config = config 
 		self.trains = copy(TRACK_DECK)
 		shuffle(self.trains)
@@ -20,7 +20,7 @@ class Game(object):
 		else:
 			self.n_players = len(pre_existing_players)
 		if not pre_existing_players:
-			self.players = [Player(id = i, memory=config['memory'], n_players=n_players, game=self) for i in range(n_players)]
+			self.players = [Player(id = i, memory=config['memory'], n_players=n_players, game=self, q_lag=q_lag) for i in range(n_players)]
 		else:
 			self.players = pre_existing_players 
 			self.reset_players_history()
@@ -85,9 +85,11 @@ class Game(object):
 	def calculate_end_game(self):
 		self.calculate_longest_track()
 		max_points = -200
+		self.winning_score = max_points
 		for player in self.players:
 			player.update_points(True)
 			max_points = max(max_points, player.total_points)
+			self.winning_score = max_points
 		first_win_check = []
 		for player in self.players:
 			if player.total_points==max_points:
