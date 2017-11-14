@@ -13,7 +13,7 @@ unsupported strategies:
 """
 
 class Player(object):
-	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0, q_lag=8):
+	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0, q_lag=8, separated_models=True):
 		"""
 		n_players must be specified so that an AI can be created if none is given
 		id is not necessary except for identification (order iwll be more important once assigned to game)
@@ -24,7 +24,7 @@ class Player(object):
 		self.game = game 
 		self.id = id
 		if not pre_existing_ai:
-			self.ai = AI(n_players, memory)
+			self.ai = AI(n_players, memory, separated_models=separated_models)
 		else:
 			self.ai = pre_existing_ai
 		self.q_lag = q_lag
@@ -179,6 +179,10 @@ class Player(object):
 		"""
 		has cities, points, and index
 		"""
+		max_top_of_deck_range = min(max_top_of_deck_range, len(self.game.tickets))
+		#self.game.mt = max_top_of_deck_range 
+		#self.game.tl = ticket_list 
+		#self.game.rt = reject_tickets
 		#ranges are reversed so that order doesn't change if anything is popped
 		for ticket in ticket_list:
 			if self.finished_ticket(ticket):
@@ -192,10 +196,11 @@ class Player(object):
 				top_ticket = self.game.tickets[top_ticket_index]
 				if top_ticket['index'] == ticket['index']:
 					self.game.tickets.pop(top_ticket_index)
+					max_top_of_deck_range = min(max_top_of_deck_range, len(self.game.tickets))
 					break
 		#sends unused tickets to the back of the deck
 		for ticket in reject_tickets:
-			for top_ticket_index in range(max_top_of_deck_range):
+			for top_ticket_index in range(max_top_of_deck_range)[::-1]:
 				top_ticket = self.game.tickets[top_ticket_index]
 				if top_ticket['index'] == ticket['index']:
 					self.game.tickets.append(self.game.tickets.pop(top_ticket_index))
@@ -381,7 +386,7 @@ class Player(object):
 
 	#puts a hard limit to avoid disastrous behavior
 	def can_select_tickets(self):
-		return self.game.config['excess_ticket_limit'] > len(self.uncompleted_tickets)
+		return (self.game.config['excess_ticket_limit'] > len(self.uncompleted_tickets)) and (len(self.game.tickets) >= 3)
 
 	#used for loading/saving player states; might go unimplemented
 	def save_state(self):

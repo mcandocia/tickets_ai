@@ -9,7 +9,8 @@ import numpy as np
 
 class Game(object):
 	def __init__(self, pre_existing_players=None, 
-		config=DEFAULT_GAME_CONFIG, n_players=None, q_lag=8):
+		config=DEFAULT_GAME_CONFIG, n_players=None, q_lag=8,
+		separated_layers=True):
 		self.config = config 
 		self.trains = copy(TRACK_DECK)
 		shuffle(self.trains)
@@ -20,7 +21,8 @@ class Game(object):
 		else:
 			self.n_players = len(pre_existing_players)
 		if not pre_existing_players:
-			self.players = [Player(id = i, memory=config['memory'], n_players=n_players, game=self, q_lag=q_lag) for i in range(n_players)]
+			self.players = [Player(id = i, memory=config['memory'], 
+				n_players=n_players, game=self, q_lag=q_lag, separated_layers=separated_layers) for i in range(n_players)]
 		else:
 			self.players = pre_existing_players 
 			self.reset_players_history()

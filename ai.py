@@ -11,7 +11,7 @@ from copy import copy, deepcopy
 TICKET_SERIALIZATION_LENGTH = N_CITIES + 1
 
 class AI(object):
-	def __init__(self, n_players, memory, n_tickets=7):
+	def __init__(self, n_players, memory, n_tickets=7, separated_models=True):
 		#define constants used for serialization
 		self.decision_template = np.zeros(23 + 2*N_TRACKS)
 		self.MEMORY_SERIALIZATION_LENGTH = (2*n_players * N_TRACKS + 19 + 24 + 14*(n_players-1))
@@ -24,45 +24,85 @@ class AI(object):
 		memory_inputs = [Input(shape=(self.MEMORY_SERIALIZATION_LENGTH,)) for _ in range(memory)]
 		ticket_inputs = [Input(shape=(self.TICKET_SERIALIZATION_LENGTH,)) for _ in range(n_tickets)]
 
-		#construct first dense layers
-		main_input_dense_layer = Dense(512, activation='relu')
-		memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
-		ticket_input_dense_layer = Dense(64,activation='relu')
+		#separated is now default to avoid model oscillation/stagnation from fitting
+		if separated_models:
+			for model_type in ['win','q']:
+				#construct first dense layers
+				main_input_dense_layer = Dense(256, activation='relu')
+				memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
+				ticket_input_dense_layer = Dense(64,activation='relu')
 
-		#connect 
-		main_encoded = main_input_dense_layer(main_input)
-		memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
-			memory_inputs)]
-		ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in ticket_inputs]
+				#connect 
+				main_encoded = main_input_dense_layer(main_input)
+				memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
+					memory_inputs)]
+				ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in ticket_inputs]
 
-		#make first full layer
-		merged_input = keras.layers.concatenate([main_encoded] + memory_encoded + ticket_encoded)
+				#make first full layer
+				merged_input = keras.layers.concatenate([main_encoded] + memory_encoded + ticket_encoded)
 
-		#make next 2 dense layers
-		LAYER_2 = Dense(256, activation='relu')(merged_input)
-		LAYER_3 = Dense(128, activation='relu')(LAYER_2)
+				#make next 2 dense layers
+				LAYER_2 = Dense(256, activation='relu')(merged_input)
+				LAYER_3 = Dense(128, activation='relu')(LAYER_2)
 
-		#separate win prediction and q learning into 2 dense layers
-		WIN_DENSE_LAYER = Dense(32, activation='relu')(LAYER_3)
-		Q_DENSE_LAYER = Dense(32, activation='relu')(LAYER_3)
+				#separate win prediction and q learning into 2 dense layers
+				#introduce skip layers from main_input and tickets to enhance predictive capabilities
+				WIN_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
+				Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))			
+				#formalize inputs
+				model_inputs = [main_input] + memory_inputs + ticket_inputs 
+				if model_type=='win':
+					WIN_PREDICTIONS = Dense(1, activation='sigmoid')(WIN_DENSE_LAYER)
+					self.win_model = Model(inputs=model_inputs, outputs=WIN_PREDICTIONS)
+					self.win_model.compile(optimizer='rmsprop',
+						loss='binary_crossentropy',
+						metrics=['accuracy'])
+				else:
+					Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
+					self.q_model = Model(inputs=model_inputs, outputs=Q_PREDICTIONS)
+					self.q_model.compile(optimizer='rmsprop',
+						loss='mean_squared_error',
+						metrics=['MSE'])
+		else:
+			main_input_dense_layer = Dense(256, activation='relu')
+			memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
+			ticket_input_dense_layer = Dense(64,activation='relu')
 
-		#output layers
-		WIN_PREDICTIONS = Dense(1, activation='sigmoid')(WIN_DENSE_LAYER)
-		Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
+			#connect 
+			main_encoded = main_input_dense_layer(main_input)
+			memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
+				memory_inputs)]
+			ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in ticket_inputs]
 
-		#formalize inputs
-		model_inputs = [main_input] + memory_inputs + ticket_inputs 
+			#make first full layer
+			merged_input = keras.layers.concatenate([main_encoded] + memory_encoded + ticket_encoded)
 
-		self.win_model = Model(inputs=model_inputs, outputs=WIN_PREDICTIONS)
-		self.q_model = Model(inputs=model_inputs, outputs=Q_PREDICTIONS)
+			#make next 2 dense layers
+			LAYER_2 = Dense(256, activation='relu')(merged_input)
+			LAYER_3 = Dense(128, activation='relu')(LAYER_2)
 
-		self.win_model.compile(optimizer='rmsprop',
-			loss='binary_crossentropy',
-			metrics=['accuracy'])
+			#separate win prediction and q learning into 2 dense layers
+			#introduce skip layers from main_input and tickets to enhance predictive capabilities
+			WIN_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
+			Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
 
-		self.q_model.compile(optimizer='rmsprop',
-			loss='mean_squared_error',
-			metrics=['MSE'])
+			#output layers
+			WIN_PREDICTIONS = Dense(1, activation='sigmoid')(WIN_DENSE_LAYER)
+			Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
+
+			#formalize inputs
+			model_inputs = [main_input] + memory_inputs + ticket_inputs 
+
+			self.win_model = Model(inputs=model_inputs, outputs=WIN_PREDICTIONS)
+			self.q_model = Model(inputs=model_inputs, outputs=Q_PREDICTIONS)
+
+			self.win_model.compile(optimizer='rmsprop',
+				loss='binary_crossentropy',
+				metrics=['accuracy'])
+
+			self.q_model.compile(optimizer='rmsprop',
+				loss='mean_squared_error',
+				metrics=['MSE'])
 
 		self.initialize_history()
 
@@ -322,6 +362,7 @@ class AI(object):
 		preds = self.q_model.predict(model_inputs)
 		return preds[:,0]
 
+	#new method separates probabilities from scores
 	def decide_based_on_p_and_q(self, probabilities, q_scores, player):
 		"""
 		uses temperature and discount parameters
@@ -329,7 +370,7 @@ class AI(object):
 		temperature = player.game.config['temperature']
 		discount = player.game.config['discount']
 
-		new_probs = normalize(probabilities * (1+min_normalize(q_scores) * discount),
+		new_probs = normalize(probabilities * discount + (min_normalize(q_scores)),
 			temperature)
 		return np.random.choice(len(new_probs), p=new_probs)
 
@@ -357,7 +398,7 @@ def normalize(x, temperature):
 		selected = x + EPSILON >=np.max(x)*1 
 		return (selected+EPSILON)/np.sum(selected+EPSILON)
 	else:
-		selected = x**(1/temperature)
+		selected = x**(1/temperature) + EPSILON
 		return (selected+EPSILON)/np.sum(selected+EPSILON)
 
 def select_ith_of_zipped(zipped, idx):
