@@ -5,6 +5,7 @@ from keras.models import Model
 from keras.models import load_model
 
 from copy import copy, deepcopy
+import warnings
 
 
 #calculate some dimension constants
@@ -23,6 +24,7 @@ class AI(object):
 		main_input = Input(shape=(self.SERIALIZATION_LENGTH,))
 		memory_inputs = [Input(shape=(self.MEMORY_SERIALIZATION_LENGTH,)) for _ in range(memory)]
 		ticket_inputs = [Input(shape=(self.TICKET_SERIALIZATION_LENGTH,)) for _ in range(n_tickets)]
+		model_inputs = [main_input] + memory_inputs + ticket_inputs 
 
 		#separated is now default to avoid model oscillation/stagnation from fitting
 		if separated_models:
@@ -50,7 +52,7 @@ class AI(object):
 				WIN_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
 				Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))			
 				#formalize inputs
-				model_inputs = [main_input] + memory_inputs + ticket_inputs 
+				
 				if model_type=='win':
 					WIN_PREDICTIONS = Dense(1, activation='sigmoid')(WIN_DENSE_LAYER)
 					self.win_model = Model(inputs=model_inputs, outputs=WIN_PREDICTIONS)
@@ -129,6 +131,13 @@ class AI(object):
 		self.win_model = load_model(w_filename)
 		self.q_model = load_model(q_filename)
 
+	def receive_models_from_other_ai(self, other_ai, name_template = 'transferable_ai_%s.h5'):
+		"""
+		will allow transfer of AI from one AI to another...not a graceful method, but not used enough to have that be necessary
+		"""
+		other_ai.save_models(name_template)
+		self.load_models(name_template)
+
 	def prepare_data(self, output='win'):
 		"""
 		prepares input & output data for a player based on their history
@@ -182,9 +191,10 @@ class AI(object):
 			action_data.append(None)
 			serializations.append(self.decision_serialize(player,'SHOULD_BUILD_TRACKS'))
 		#skip turn (only makes sense with hoarders near end of game...)
-		action_types.append('do_nothing')
-		action_data.append(None)
-		serializations.append(self.decision_serialize(player,'DO_NOTHING'))
+		if len(action_types) == 0:
+			action_types.append('do_nothing')
+			action_data.append(None)
+			serializations.append(self.decision_serialize(player,'DO_NOTHING'))
 		#concatenate each serialization
 		serializations = player.append_serializations(serializations)
 
@@ -369,10 +379,16 @@ class AI(object):
 		"""
 		temperature = player.game.config['temperature']
 		discount = player.game.config['discount']
-
+		#print probabilities 
+		#print q_scores 
 		new_probs = normalize(probabilities * discount + (min_normalize(q_scores)),
 			temperature)
-		return np.random.choice(len(new_probs), p=new_probs)
+		#print new_probs
+		try:
+			return np.random.choice(len(new_probs), p=new_probs)
+		except ValueError:
+			warnings.warn("probs didn't sum to 1; defaulting to uniform probabilities")
+			return np.random.choice(len(new_probs))
 
 def vertical_repeat(vec, n):
 	"""
@@ -394,12 +410,13 @@ def min_normalize(x, epsilon=EPSILON):
 	return (x - np.min(x))/(epsilon + np.max(x) - np.min(x))
 
 def normalize(x, temperature):
-	if temperature==0:
+	if temperature < EPSILON:
 		selected = x + EPSILON >=np.max(x)*1 
 		return (selected+EPSILON)/np.sum(selected+EPSILON)
 	else:
-		selected = x**(1/temperature) + EPSILON
-		return (selected+EPSILON)/np.sum(selected+EPSILON)
+		x = x + EPSILON 
+		selected = x**(1./(temperature)**0.5)
+		return (selected)/np.sum(selected)
 
 def select_ith_of_zipped(zipped, idx):
 	return [x for i, x, y  in enumerate(zipped) if i==idx][0]
