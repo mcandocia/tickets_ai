@@ -22,13 +22,14 @@ class Game(object):
 			self.n_players = len(pre_existing_players)
 		if not pre_existing_players:
 			self.players = [Player(id = i, memory=config['memory'], 
-				n_players=n_players, game=self, q_lag=q_lag, separated_models=separated_models) for i in range(n_players)]
+				n_players=n_players, game=self, q_lag=q_lag, other_configs=config) for i in range(n_players)]
 		else:
 			self.players = pre_existing_players 
 			self.reset_players_history()
 		for i, player in enumerate(self.players):
 			player.order = i 
-			player.game = self 		
+			player.game = self
+			player.ai.update_discount_configs(config) 		
 		#organize tracks
 		self.tracks = deepcopy(TRACKS)
 		for track in self.tracks:

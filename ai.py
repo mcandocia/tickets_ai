@@ -12,140 +12,110 @@ import warnings
 TICKET_SERIALIZATION_LENGTH = N_CITIES + 1
 
 class AI(object):
-	def __init__(self, n_players, memory, n_tickets=7, separated_models=True):
+	def __init__(self, n_players, memory, n_tickets=7, model_discount_config = DEFAULT_MODEL_CONFIG):
 		#define constants used for serialization
 		self.decision_template = np.zeros(23 + 2*N_TRACKS)
 		self.MEMORY_SERIALIZATION_LENGTH = (2*n_players * N_TRACKS + 19 + 24 + 14*(n_players-1))
 		#add decision serialization
 		self.SERIALIZATION_LENGTH = self.MEMORY_SERIALIZATION_LENGTH + 23 + 2*N_TRACKS
 		self.TICKET_SERIALIZATION_LENGTH = N_CITIES + 1 
+		self.memory=memory
+		self.n_tickets = n_tickets
+		self.n_players = n_players 
+		self.discount_config = model_discount_config 
 
 		#construct input layers
-		main_input = Input(shape=(self.SERIALIZATION_LENGTH,))
-		memory_inputs = [Input(shape=(self.MEMORY_SERIALIZATION_LENGTH,)) for _ in range(memory)]
-		ticket_inputs = [Input(shape=(self.TICKET_SERIALIZATION_LENGTH,)) for _ in range(n_tickets)]
-		model_inputs = [main_input] + memory_inputs + ticket_inputs 
+		self.main_input = Input(shape=(self.SERIALIZATION_LENGTH,))
+		self.memory_inputs = [Input(shape=(self.MEMORY_SERIALIZATION_LENGTH,)) for _ in range(memory)]
+		self.ticket_inputs = [Input(shape=(self.TICKET_SERIALIZATION_LENGTH,)) for _ in range(n_tickets)]
+		self.model_inputs = [main_input] + memory_inputs + ticket_inputs 
 
-		#separated is now default to avoid model oscillation/stagnation from fitting
-		if separated_models:
-			for model_type in ['win','q']:
-				#construct first dense layers
-				main_input_dense_layer = Dense(256, activation='relu')
-				memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
-				ticket_input_dense_layer = Dense(64,activation='relu')
+		self.discount_values = [x[1] for x in model_discount_config]
+		self.delay_values = [x[0] for x in model_discount_config]
 
-				#connect 
-				main_encoded = main_input_dense_layer(main_input)
-				memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
-					memory_inputs)]
-				ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in ticket_inputs]
-
-				#make first full layer
-				merged_input = keras.layers.concatenate([main_encoded] + memory_encoded + ticket_encoded)
-
-				#make next 2 dense layers
-				LAYER_2 = Dense(256, activation='relu')(merged_input)
-				LAYER_3 = Dense(128, activation='relu')(LAYER_2)
-
-				#separate win prediction and q learning into 2 dense layers
-				#introduce skip layers from main_input and tickets to enhance predictive capabilities
-				WIN_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
-				Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))			
-				#formalize inputs
-				
-				if model_type=='win':
-					WIN_PREDICTIONS = Dense(1, activation='sigmoid')(WIN_DENSE_LAYER)
-					self.win_model = Model(inputs=model_inputs, outputs=WIN_PREDICTIONS)
-					self.win_model.compile(optimizer='rmsprop',
-						loss='binary_crossentropy',
-						metrics=['accuracy'])
-				else:
-					Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
-					self.q_model = Model(inputs=model_inputs, outputs=Q_PREDICTIONS)
-					self.q_model.compile(optimizer='rmsprop',
-						loss='mean_squared_error',
-						metrics=['MSE'])
-		else:
-			main_input_dense_layer = Dense(256, activation='relu')
-			memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
-			ticket_input_dense_layer = Dense(64,activation='relu')
-
-			#connect 
-			main_encoded = main_input_dense_layer(main_input)
-			memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
-				memory_inputs)]
-			ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in ticket_inputs]
-
-			#make first full layer
-			merged_input = keras.layers.concatenate([main_encoded] + memory_encoded + ticket_encoded)
-
-			#make next 2 dense layers
-			LAYER_2 = Dense(256, activation='relu')(merged_input)
-			LAYER_3 = Dense(128, activation='relu')(LAYER_2)
-
-			#separate win prediction and q learning into 2 dense layers
-			#introduce skip layers from main_input and tickets to enhance predictive capabilities
-			WIN_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
-			Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
-
-			#output layers
-			WIN_PREDICTIONS = Dense(1, activation='sigmoid')(WIN_DENSE_LAYER)
-			Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
-
-			#formalize inputs
-			model_inputs = [main_input] + memory_inputs + ticket_inputs 
-
-			self.win_model = Model(inputs=model_inputs, outputs=WIN_PREDICTIONS)
-			self.q_model = Model(inputs=model_inputs, outputs=Q_PREDICTIONS)
-
-			self.win_model.compile(optimizer='rmsprop',
-				loss='binary_crossentropy',
-				metrics=['accuracy'])
-
-			self.q_model.compile(optimizer='rmsprop',
-				loss='mean_squared_error',
-				metrics=['MSE'])
+		for i, delay in enumerate(self.delay_values):
+			self.initialize_network(i)
 
 		self.initialize_history()
+
+	def initialize_network(self, index):
+		memory = self.memory 
+		n_tickets = self.n_tickets 
+		n_players = self.n_players 
+
+		main_input_dense_layer = Dense(256, activation='relu')
+		memory_input_dense_layers = [Dense(256, activation='relu') for _ in range(memory)]
+		ticket_input_dense_layer = Dense(64,activation='relu')
+
+		#connect 
+		main_encoded = main_input_dense_layer(self.main_input)
+		memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
+			memory_inputs)]
+		ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in self.ticket_inputs]
+
+		#make first full layer
+		merged_input = keras.layers.concatenate([main_encoded] + memory_encoded + ticket_encoded)
+
+		#make next 2 dense layers
+		LAYER_2 = Dense(256, activation='relu')(merged_input)
+		LAYER_3 = Dense(128, activation='relu')(LAYER_2)
+
+		#separate win prediction and q learning into 2 dense layers
+		#introduce skip layers from main_input and tickets to enhance predictive capabilities
+		Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
+
+		#output layers
+		Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
+
+		#formalize inputs
+		#model_inputs = [main_input] + memory_inputs + ticket_inputs 
+
+		self.q_models[index] = Model(inputs=self.model_inputs, outputs=Q_PREDICTIONS)
+		self.q_models[index].compile(optimizer='rmsprop',
+			loss='mean_squared_error',
+			metrics=['MSE'])
 
 	def initialize_history(self):
 		self.serialization_history = []
 		self.ticket_serialization_history = []
 		self.win_history = []
-		self.q_score_history = []
+		self.q_score_histories = [[] for _ in self.delay_values]
 		self.memory_history = []
 
 	def reset_history(self):
 		self.initialize_history()
 
-	#an %s should be included in both of these to account for the q and win models
+	#the filename can be anything, as the delay and numeric index are handled independently
 	def save_models(self, filename):
-		w_filename = filename % 'win'
-		q_filename = filename % 'q'
-		self.win_model.save(w_filename)
-		self.q_model.save(q_filename)
+		filename_template = filename + '_N%d_D%d.h5'
+		for i, delay in enumerate(self.delay_values):
+			self.q_models[i].save(filename_template % (i, delay))
 
 	def load_models(self, filename):
-		w_filename = filename % 'win'
-		q_filename = filename % 'q'
-		self.win_model = load_model(w_filename)
-		self.q_model = load_model(q_filename)
+		filename_template = filename + '_N%d_D%d.h5'
+		filename_template = filename + '_N%d_D%d.h5'
+		for i, delay in enumerate(self.delay_values):
+			self.q_models[i] = load_model(filename_template % (i, delay))
 
-	def receive_models_from_other_ai(self, other_ai, name_template = 'transferable_ai_%s.h5'):
+	def receive_models_from_other_ai(self, other_ai, name_template = 'transferable_ai'):
 		"""
 		will allow transfer of AI from one AI to another...not a graceful method, but not used enough to have that be necessary
 		"""
 		other_ai.save_models(name_template)
 		self.load_models(name_template)
 
-	def prepare_data(self, output='win'):
+	#when a new game is started, these configs will be updated according to game configs
+	def update_discount_configs(self, config):
+		model_discount_config = config['model_discount_config']
+		self.discount_values = [x[1] for x in model_discount_config]
+		self.delay_values = [x[0] for x in model_discount_config]
+
+	def prepare_data(self, index):
 		"""
 		prepares input & output data for a player based on their history
 		"""
-		if output=='win':
-			y = np.asarray(self.win_history)
-		else:
-			y = np.asarray(self.q_score_history)
+
+		y = np.asarray(self.q_score_histories[index])
 
 		#inputs is a list of multiple numpy arrays
 		x = []
@@ -156,13 +126,16 @@ class AI(object):
 			x.append(np.asarray([ticket_hist[i] for ticket_hist in self.ticket_serialization_history]))
 		return x, y
 
-	def train_win(self, n_epochs=10):
-		x, y = self.prepare_data( 'win')
-		self.win_model.fit(x, y, epochs=n_epochs, batch_size=1000, verbose=0)
+	def train(self, **kwargs):
+		for i, discount in self.discount_values:
+			if discount==0:
+				continue
+			kwargs['index'] = i
+			self.train_q(**kwargs)
 
-	def train_q(self, n_epochs=10):
-		x, y = self.prepare_data( 'q')
-		self.win_model.fit(x, y, epochs=n_epochs, batch_size=1000, verbose=0)
+	def train_q(self, n_epochs=10, index):
+		x, y = self.prepare_data( index)
+		self.q_models[index].fit(x, y, epochs=n_epochs, batch_size=1000, verbose=0)
 
 	def decide_on_action(self, player, possible_tracks):
 		"""
@@ -173,7 +146,6 @@ class AI(object):
 		action_types = []
 		action_data = []
 		serializations = []
-		
 
 		#should choose train
 		if player.game.has_grabbable_train_pile():
@@ -198,13 +170,12 @@ class AI(object):
 		#concatenate each serialization
 		serializations = player.append_serializations(serializations)
 
-		#calculate probs and q-scores
-		probabilities = self.calculate_probabilities(serializations, player)
+		#calculate each non-zero q score
 		q_scores = self.calculate_q_scores(serializations, player)
 
 		#make a decision based on both
 		#some player/game configs go into the algorithm
-		decision_index = self.decide_based_on_p_and_q(probabilities, q_scores, player)
+		decision_index = self.decide_based_on_q_scores(q_scores, player)
 
 		#record history and then return decision and related data
 		player.record_history(serializations[decision_index])
@@ -225,13 +196,12 @@ class AI(object):
 					serializations.append(self.decision_serialize(player, 'BUILD_TRACKS', data))
 		#concatenate each serialization
 		serializations = player.append_serializations(serializations)
-		#calculate probs and q-scores
-		probabilities = self.calculate_probabilities(serializations, player)
+		#calculate q-scores
 		q_scores = self.calculate_q_scores(serializations, player)
 
 		#make a decision based on both
 		#some player/game configs go into the algorithm
-		decision_index = self.decide_based_on_p_and_q(probabilities, q_scores, player)
+		decision_index = self.decide_based_on_q_scores(q_scores, player)
 
 		#record history and then return decision and related data
 		player.record_history(serializations[decision_index])
@@ -251,11 +221,12 @@ class AI(object):
 		decision_serialization = [self.decision_serialize(player, 'ticket_selection')]
 		serializations = player.append_serializations(decision_serialization)
 		ticket_serializations = player.self_ticket_serialization(tickets, min_tickets)
-		#calculate probs and q-scores
-		probabilities = self.calculate_probabilities(serializations, player, [y for x, y in ticket_serializations])
-		q_scores = self.calculate_q_scores(serializations, player, [y for x, y in ticket_serializations])
+		#calculate q-scores
+		q_scores = self.calculate_q_scores(serializations, player)
 
-		decision_index = self.decide_based_on_p_and_q(probabilities, q_scores, player)
+		#make a decision based on both
+		#some player/game configs go into the algorithm
+		decision_index = self.decide_based_on_q_scores(q_scores, player)
 
 		#record history (with new ticket state) 
 		player.record_history(serializations[0], ticket_serialization=ticket_serializations[decision_index][1])
@@ -273,12 +244,11 @@ class AI(object):
 		#concatenate each serialization
 		serializations = player.append_serializations(decision_serializations)
 		#calc probability & q-score
-		probabilities = self.calculate_probabilities(serializations, player)
 		q_scores = self.calculate_q_scores(serializations, player)
 
 		#make a decision based on both
 		#some player/game configs go into the algorithm
-		decision_index = self.decide_based_on_p_and_q(probabilities, q_scores, player)
+		decision_index = self.decide_based_on_q_scores(q_scores, player)
 
 		#record history and then return decision and related data
 		player.record_history(serializations[decision_index])
@@ -324,35 +294,6 @@ class AI(object):
 		return serialization
 
 	#main serialization - memory serializations - ticket serializations
-	def calculate_probabilities(self, serializations, player, ticket_combos=None):
-		"""
-		will iterate over ticket combo serializations if sspecified, otherwise
-		will use default player ticket serializations
-		"""
-		if not ticket_combos:
-			ticket_serialization = player.base_ticket_serialization[0]
-			n_serializations = len(serializations)
-			#print n_serializations
-			player.game.s = serializations 
-			model_inputs = [np.vstack(serializations)] + vertical_repeat(player.memories, n_serializations) + vertical_repeat(ticket_serialization, n_serializations)
-			#model_inputs = [[ [serialization[i] ] + player.memories + ticket_serialization for i in range(n_serializations)]
-		else:
-			n_combos = len(ticket_combos)
-			player.game.s = serializations  
-			player.game.m = player.memories 
-			player.game.tc = ticket_combos
-			#print [np.asarray(ticket_combos)]
-			model_inputs = vertical_repeat(serializations, n_combos) + vertical_repeat(player.memories, n_combos) + restack(ticket_combos)
-			#model_inputs = [[serializations[0]] + player.memories + ticket_serialization for ticket_serialization in ticket_combos]
-		#print len(model_inputs)
-		#print len(model_inputs[0])#this is 6 instead of 10...
-		player.game.mi = model_inputs
-		#print model_inputs
-		preds = self.win_model.predict(model_inputs)
-		#print 'made preds'
-		return preds[:,0]
-
-
 	def calculate_q_scores(self, serializations, player, ticket_combos=None):
 		"""
 		will iterate over ticket combo serializations if sspecified, otherwise
@@ -369,23 +310,34 @@ class AI(object):
 			#player.game.tc = ticket_combos
 			#print [np.asarray(ticket_combos)]
 			model_inputs = vertical_repeat(serializations, n_combos) + vertical_repeat(player.memories, n_combos) + restack(ticket_combos)
-		preds = self.q_model.predict(model_inputs)
-		return preds[:,0]
+		all_predictions = []
+		for i, delay_value in self.delay_values:
+			if self.discount_values[i]==0:
+				all_predictions.append([])
+				continue
+			preds = self.q_model.predict(model_inputs)
+			all_predictions.append(preds[:,0])
+		return all_predictions
 
-	#new method separates probabilities from scores
-	def decide_based_on_p_and_q(self, probabilities, q_scores, player):
+	#decides based on scores
+	def decide_based_q_scores(self, q_scores, player):
 		"""
 		uses temperature and discount parameters
 		"""
 		temperature = player.game.config['temperature']
-		discount = player.game.config['discount']
-		#print probabilities 
-		#print q_scores 
-		new_probs = normalize(probabilities * discount + (min_normalize(q_scores)),
-			temperature)
+		#filters out weights that are zero (and the corresponding preds)
+		weights, preds = zip(*[(w, p) for  w, p in zip(self.discount_values, q_scores) if  w > 0])
+		#multiplies weights and preds together for weighted sums
+		weighted_sums = np.matmul(weights, preds)
+		weighted_sums = weighted_sums - np.max(weighted_sums)
+		#note that in a normal boltzmann distribution, the exponential is negative; in this
+		#case maximization is desired so the sign is inverted (and the max is subtracted to avoid issues with huge values)
+		if temperature==0:
+			return np.argmax(weighted_sums)
+		loadings = np.exp(weighted_sums/temperature) + EPSILON 
 		#print new_probs
 		try:
-			return np.random.choice(len(new_probs), p=new_probs)
+			return np.random.choice(len(new_probs), p=loadings/np.sum(loadings))
 		except ValueError:
 			warnings.warn("probs didn't sum to 1; defaulting to uniform probabilities")
 			return np.random.choice(len(new_probs))

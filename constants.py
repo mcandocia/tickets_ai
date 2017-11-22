@@ -173,12 +173,20 @@ big_ticket_limit - [integer]/None - If an integer, players will initially be giv
                    tickets that includes a ticket of at least this value; tickets of this value or 
                    greater will not be drawable during the game
 """
+
+#the model config has a list of tuples of the form (delay, weight), allowing influence of varying amounts
+#the default is 60% delay=1, 25% delay=2, 15% delay=3
+#the network should always have the same ones (or at the very least the same amount) and same order when training, even if the raw
+#weights are different
+DEFAULT_MODEL_DISCOUNT_CONFIG = [(1, 0.6), (2, 0.25), (3, 0.15)]
+
 DEFAULT_GAME_CONFIG = {'ticket_versions':'base',
                        'memory':0,
                        'discount':0.8,
                        'temperature':1.,
                        'excess_ticket_limit':7,
-                       'big_ticket_limit':None}
+                       'big_ticket_limit':None,
+                       'model_discount_config':DEFAULT_MODEL_DISCOUNT_CONFIG}
 
 #number of points by segment length
 SEGMENT_POINTS = [0, 1, 2, 4, 7, 10, 15]

@@ -13,7 +13,7 @@ unsupported strategies:
 """
 
 class Player(object):
-	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0, q_lag=8, separated_models=True):
+	def __init__(self, n_players, game, pre_existing_ai=None, id=None, memory=0, q_lag=8, other_configs=None):
 		"""
 		n_players must be specified so that an AI can be created if none is given
 		id is not necessary except for identification (order iwll be more important once assigned to game)
@@ -24,7 +24,7 @@ class Player(object):
 		self.game = game 
 		self.id = id
 		if not pre_existing_ai:
-			self.ai = AI(n_players, memory, separated_models=separated_models)
+			self.ai = AI(n_players, memory, model_discount_config=other_configs['model_discount_config'])
 		else:
 			self.ai = pre_existing_ai
 		self.q_lag = q_lag
@@ -111,11 +111,12 @@ class Player(object):
 		self.actual_scores[-1] = self.total_points 
 		self.win_history = [self.win*1 for _ in self.serialization_history]
 		max_turn = self.turn
-		for turn in self.decision_turn_indexes:
-			self.q_score_history.append(self.actual_scores[min(turn+self.q_lag, max_turn)])
+		for i, delay in enumerate(self.ai.delay_values):
+			for turn in self.decision_turn_indexes:
+				self.q_score_histories[i].append(self.actual_scores[min(turn+delay, max_turn)])
 		if update_ai:
-			self.ai.win_history += self.win_history
-			self.ai.q_score_history += self.q_score_history 
+			for i, delay in enumerate(self.ai.delay_values):
+				self.ai.q_score_histories[i] += self.q_score_histories[i]
 			self.ai.serialization_history += self.serialization_history 
 			self.ai.ticket_serialization_history += self.ticket_serialization_history
 			self.ai.memory_history += self.memory_history
@@ -133,7 +134,7 @@ class Player(object):
 		self.serialization_history = []
 		self.ticket_serialization_history = []
 		self.win_history = []
-		self.q_score_history = []
+		self.q_score_histories = [ [] for _ in self.ai.delay_values]
 
 		#extra trackers for assisting in update
 		#this will mark the player turn number at each decision
