@@ -12,7 +12,7 @@ import warnings
 TICKET_SERIALIZATION_LENGTH = N_CITIES + 1
 
 class AI(object):
-	def __init__(self, n_players, memory, n_tickets=7, model_discount_config = DEFAULT_MODEL_CONFIG):
+	def __init__(self, n_players, memory, n_tickets=7, model_discount_config = DEFAULT_MODEL_DISCOUNT_CONFIG):
 		#define constants used for serialization
 		self.decision_template = np.zeros(23 + 2*N_TRACKS)
 		self.MEMORY_SERIALIZATION_LENGTH = (2*n_players * N_TRACKS + 19 + 24 + 14*(n_players-1))
@@ -28,10 +28,12 @@ class AI(object):
 		self.main_input = Input(shape=(self.SERIALIZATION_LENGTH,))
 		self.memory_inputs = [Input(shape=(self.MEMORY_SERIALIZATION_LENGTH,)) for _ in range(memory)]
 		self.ticket_inputs = [Input(shape=(self.TICKET_SERIALIZATION_LENGTH,)) for _ in range(n_tickets)]
-		self.model_inputs = [main_input] + memory_inputs + ticket_inputs 
+		self.model_inputs = [self.main_input] + self.memory_inputs + self.ticket_inputs 
 
 		self.discount_values = [x[1] for x in model_discount_config]
 		self.delay_values = [x[0] for x in model_discount_config]
+		#placeholder, will be initialized in initialize_network(...)
+		self.q_models = [None for _ in self.delay_values]
 
 		for i, delay in enumerate(self.delay_values):
 			self.initialize_network(i)
@@ -50,7 +52,7 @@ class AI(object):
 		#connect 
 		main_encoded = main_input_dense_layer(self.main_input)
 		memory_encoded = [dense_layer(input_layer) for dense_layer, input_layer in zip(memory_input_dense_layers, 
-			memory_inputs)]
+			self.memory_inputs)]
 		ticket_encoded = [ticket_input_dense_layer(ticket_input) for ticket_input in self.ticket_inputs]
 
 		#make first full layer
@@ -62,7 +64,7 @@ class AI(object):
 
 		#separate win prediction and q learning into 2 dense layers
 		#introduce skip layers from main_input and tickets to enhance predictive capabilities
-		Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [main_input] + ticket_inputs))
+		Q_DENSE_LAYER = Dense(32, activation='relu')(keras.layers.concatenate([LAYER_3] + [self.main_input] + self.ticket_inputs))
 
 		#output layers
 		Q_PREDICTIONS = Dense(1, activation='relu')(Q_DENSE_LAYER)
@@ -133,7 +135,7 @@ class AI(object):
 			kwargs['index'] = i
 			self.train_q(**kwargs)
 
-	def train_q(self, n_epochs=10, index):
+	def train_q(self, n_epochs=10, index=0):
 		x, y = self.prepare_data( index)
 		self.q_models[index].fit(x, y, epochs=n_epochs, batch_size=1000, verbose=0)
 
@@ -311,16 +313,16 @@ class AI(object):
 			#print [np.asarray(ticket_combos)]
 			model_inputs = vertical_repeat(serializations, n_combos) + vertical_repeat(player.memories, n_combos) + restack(ticket_combos)
 		all_predictions = []
-		for i, delay_value in self.delay_values:
+		for i, delay_value in enumerate(self.delay_values):
 			if self.discount_values[i]==0:
 				all_predictions.append([])
 				continue
-			preds = self.q_model.predict(model_inputs)
+			preds = self.q_models[i].predict(model_inputs)
 			all_predictions.append(preds[:,0])
 		return all_predictions
 
 	#decides based on scores
-	def decide_based_q_scores(self, q_scores, player):
+	def decide_based_on_q_scores(self, q_scores, player):
 		"""
 		uses temperature and discount parameters
 		"""
@@ -337,10 +339,10 @@ class AI(object):
 		loadings = np.exp(weighted_sums/temperature) + EPSILON 
 		#print new_probs
 		try:
-			return np.random.choice(len(new_probs), p=loadings/np.sum(loadings))
+			return np.random.choice(len(loadings), p=loadings/np.sum(loadings))
 		except ValueError:
 			warnings.warn("probs didn't sum to 1; defaulting to uniform probabilities")
-			return np.random.choice(len(new_probs))
+			return np.random.choice(len(loadings))
 
 def vertical_repeat(vec, n):
 	"""
